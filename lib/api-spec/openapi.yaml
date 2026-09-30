@@ -131,6 +131,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResaleCollectiblesResponse"
+  /resale/gift-types:
+    get:
+      operationId: listResaleGiftTypes
+      tags: [resale]
+      summary: List collectible gift types returned by Telegram
+      responses:
+        "200":
+          description: Collectible gift types from the authorized Telegram account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResaleGiftTypesResponse"
   /resale/preflight:
     post:
       operationId: previewResalePaymentForm
@@ -149,6 +161,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ResalePreflightResponse"
+  /resale/purchase:
+    post:
+      operationId: confirmResalePurchase
+      tags: [resale]
+      summary: Submit one explicitly confirmed resale payment to Telegram
+      description: A single-use preflight nonce and exact expected Stars total are required. This operation can spend Stars and deliver one collectible to the configured recipient.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResalePurchaseInput"
+      responses:
+        "200":
+          description: Telegram payment and delivery result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResalePurchaseResponse"
+  /resale/transactions:
+    get:
+      operationId: listResaleTransactions
+      tags: [resale]
+      summary: List persisted Telegram resale payment results
+      responses:
+        "200":
+          description: Most recent resale preflight and transaction records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResaleTransactionsResponse"
 components:
   schemas:
     HealthStatus:
@@ -372,6 +415,31 @@ components:
       properties:
         name:
           type: string
+    ResaleGiftType:
+      type: object
+      required: [giftId, name, stars, soldOut]
+      properties:
+        giftId:
+          type: string
+        name:
+          type: string
+        stars:
+          type: integer
+          minimum: 0
+        soldOut:
+          type: boolean
+    ResaleGiftTypesResponse:
+      type: object
+      required: [supported, items, message]
+      properties:
+        supported:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResaleGiftType"
+        message:
+          type: string
         value:
           type: string
     ResaleCollectible:
@@ -427,6 +495,29 @@ components:
           type: string
           minLength: 1
           maxLength: 256
+        offset:
+          type: string
+    ResalePurchaseInput:
+      type: object
+      required: [giftId, slug, confirmationNonce, expectedTotalStars, confirmationPhrase]
+      properties:
+        giftId:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 256
+        confirmationNonce:
+          type: string
+          minLength: 32
+          maxLength: 64
+        expectedTotalStars:
+          type: integer
+          minimum: 1
+        confirmationPhrase:
+          type: string
+          enum: [BUY]
     ResalePaymentLine:
       type: object
       required: [label, amountStars]
@@ -463,6 +554,15 @@ components:
         - transferFeeStars
         - totalStars
         - paymentForm
+        - confirmationNonce
+        - payerAccountId
+        - payerUsername
+        - payerBalanceStars
+        - payerBalanceVerified
+        - payerAccountId
+        - payerUsername
+        - payerBalanceStars
+        - payerBalanceVerified
       properties:
         status:
           type: string
@@ -495,6 +595,107 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ResalePaymentFormPreview"
             - type: "null"
+        confirmationNonce:
+          type: ["string", "null"]
+        payerAccountId:
+          type: ["string", "null"]
+        payerUsername:
+          type: ["string", "null"]
+        payerBalanceStars:
+          type: ["integer", "null"]
+        payerBalanceVerified:
+          type: boolean
+        payerAccountId:
+          type: ["string", "null"]
+        payerUsername:
+          type: ["string", "null"]
+        payerBalanceStars:
+          type: ["integer", "null"]
+        payerBalanceVerified:
+          type: boolean
+    ResalePurchaseResponse:
+      type: object
+      required:
+        - status
+        - paymentConfirmed
+        - deliveryConfirmed
+        - message
+        - recipientId
+        - recipientUsername
+        - collectible
+        - totalStars
+        - transactionId
+      properties:
+        status:
+          type: string
+          enum: [sent, blocked, failed, unknown]
+        paymentConfirmed:
+          type: boolean
+        deliveryConfirmed:
+          type: boolean
+        message:
+          type: string
+        recipientId:
+          type: string
+        recipientUsername:
+          type: string
+        collectible:
+          anyOf:
+            - $ref: "#/components/schemas/ResaleCollectible"
+            - type: "null"
+        totalStars:
+          type: ["integer", "null"]
+        transactionId:
+          type: string
+    ResaleTransaction:
+      type: object
+      required:
+        - id
+        - createdAt
+        - giftId
+        - slug
+        - name
+        - recipientId
+        - recipientUsername
+        - totalStars
+        - status
+        - paymentConfirmed
+        - deliveryConfirmed
+        - message
+        - telegramResult
+      properties:
+        id:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        giftId:
+          type: string
+        slug:
+          type: string
+        name:
+          type: string
+        recipientId:
+          type: string
+        recipientUsername:
+          type: string
+        totalStars:
+          type: ["integer", "null"]
+        status:
+          type: string
+          enum: [form_ready, processing, sent, failed, unknown]
+        paymentConfirmed:
+          type: boolean
+        deliveryConfirmed:
+          type: boolean
+        message:
+          type: string
+        telegramResult:
+          type: ["string", "null"]
+    ResaleTransactionsResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/ResaleTransaction"
     ErrorResponse:
       type: object
       required:

@@ -27,4 +27,13 @@ export interface ResalePreflightResponse {
   /** @nullable */
   totalStars: number | null;
   paymentForm: ResalePaymentFormPreview | null;
+  /** @nullable */
+  confirmationNonce: string | null;
+  /** @nullable */
+  payerAccountId: string | null;
+  /** @nullable */
+  payerUsername: string | null;
+  /** @nullable */
+  payerBalanceStars: number | null;
+  payerBalanceVerified: boolean;
 }

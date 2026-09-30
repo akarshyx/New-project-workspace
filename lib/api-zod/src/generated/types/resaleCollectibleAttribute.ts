@@ -8,5 +8,4 @@
 
 export interface ResaleCollectibleAttribute {
   name: string;
-  value: string;
 }

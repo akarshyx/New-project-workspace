@@ -112,7 +112,21 @@ export interface PrepaidUpgradeGiftsResponse {
 
 export interface ResaleCollectibleAttribute {
   name: string;
-  value: string;
+}
+
+export interface ResaleGiftType {
+  giftId: string;
+  name: string;
+  /** @minimum 0 */
+  stars: number;
+  soldOut: boolean;
+}
+
+export interface ResaleGiftTypesResponse {
+  supported: boolean;
+  items: ResaleGiftType[];
+  message: string;
+  value?: string;
 }
 
 export interface ResaleCollectible {
@@ -147,6 +161,32 @@ export interface ResalePreflightInput {
      * @maxLength 256
      */
   slug: string;
+  offset?: string;
+}
+
+export type ResalePurchaseInputConfirmationPhrase = typeof ResalePurchaseInputConfirmationPhrase[keyof typeof ResalePurchaseInputConfirmationPhrase];
+
+
+export const ResalePurchaseInputConfirmationPhrase = {
+  BUY: 'BUY',
+} as const;
+
+export interface ResalePurchaseInput {
+  /** @pattern ^[1-9][0-9]*$ */
+  giftId: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  slug: string;
+  /**
+     * @minLength 32
+     * @maxLength 64
+     */
+  confirmationNonce: string;
+  /** @minimum 1 */
+  expectedTotalStars: number;
+  confirmationPhrase: ResalePurchaseInputConfirmationPhrase;
 }
 
 export interface ResalePaymentLine {
@@ -187,7 +227,70 @@ export interface ResalePreflightResponse {
   /** @nullable */
   totalStars: number | null;
   paymentForm: ResalePaymentFormPreview | null;
+  /** @nullable */
+  confirmationNonce: string | null;
+  /** @nullable */
+  payerAccountId: string | null;
+  /** @nullable */
+  payerUsername: string | null;
+  /** @nullable */
+  payerBalanceStars: number | null;
+  payerBalanceVerified: boolean;
 }
+
+export type ResalePurchaseResponseStatus = typeof ResalePurchaseResponseStatus[keyof typeof ResalePurchaseResponseStatus];
+
+
+export const ResalePurchaseResponseStatus = {
+  sent: 'sent',
+  blocked: 'blocked',
+  failed: 'failed',
+  unknown: 'unknown',
+} as const;
+
+export interface ResalePurchaseResponse {
+  status: ResalePurchaseResponseStatus;
+  paymentConfirmed: boolean;
+  deliveryConfirmed: boolean;
+  message: string;
+  recipientId: string;
+  recipientUsername: string;
+  collectible: ResaleCollectible | null;
+  /** @nullable */
+  totalStars: number | null;
+  transactionId?: string;
+}
+
+export type ResaleTransactionStatus = typeof ResaleTransactionStatus[keyof typeof ResaleTransactionStatus];
+
+
+export const ResaleTransactionStatus = {
+  form_ready: 'form_ready',
+  processing: 'processing',
+  sent: 'sent',
+  failed: 'failed',
+  unknown: 'unknown',
+} as const;
+
+export interface ResaleTransaction {
+  id: string;
+  createdAt: string;
+  giftId: string;
+  slug: string;
+  name: string;
+  recipientId: string;
+  recipientUsername: string;
+  /** @nullable */
+  totalStars: number | null;
+  status: ResaleTransactionStatus;
+  paymentConfirmed: boolean;
+  deliveryConfirmed: boolean;
+  message: string;
+  /** @nullable */
+  telegramResult: string | null;
+}
+
+export type ResaleTransactionsResponse = ResaleTransaction[];
 
 export interface ErrorResponse {
   error: string;

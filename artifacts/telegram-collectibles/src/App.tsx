@@ -14,20 +14,30 @@ import {
   LayoutGrid,
   LockKeyhole,
   MessageCircle,
+  Search,
   RefreshCw,
+  ShieldAlert,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Tag,
   X,
 } from 'lucide-react';
 import {
   getListCollectiblesQueryKey,
+  getListResaleCollectiblesQueryKey,
+  getListResaleTransactionsQueryKey,
+  useConfirmResalePurchase,
   useGetBotStatus,
   useGetDashboard,
   useListOwnedCollectibles,
   useListCollectibles,
   useListPurchases,
+  useListResaleCollectibles,
+  useListResaleGiftTypes,
+  useListResaleTransactions,
+  usePreviewResalePaymentForm,
 } from '@workspace/api-client-react';
 import type { BotStatus, Collectible, Purchase } from '@workspace/api-client-react';
 import { Link, Route, Router as WouterRouter, Switch, useLocation } from 'wouter';
@@ -41,6 +51,9 @@ const queryClient = new QueryClient();
 function formatStars(value: number) {
   return new Intl.NumberFormat('en-US').format(value);
 }
+
+const AUTHORIZED_RECIPIENT_USERNAME = '@arshxy';
+const AUTHORIZED_RECIPIENT_ID = '8598790977';
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('en-US', {
@@ -75,13 +88,16 @@ function AppShell({
           <span className="brand-mark">TG</span>
           <span>
             <span className="brand-name">vault / gift</span>
-            <span className="brand-sub">buyer cockpit</span>
+          <span className="brand-sub">collectibles desk</span>
           </span>
         </Link>
         <div className="nav-label">Workspace</div>
         <nav className="nav-list" aria-label="Main navigation">
           <Link href="/" className={`nav-link ${location === '/' ? 'active' : ''}`} data-testid="link-browse">
             <LayoutGrid size={16} strokeWidth={1.8} /> Browse gifts
+          </Link>
+          <Link href="/resale" className={`nav-link ${location === '/resale' ? 'active' : ''}`} data-testid="link-resale">
+            <Tag size={16} strokeWidth={1.8} /> Resale inspector
           </Link>
           <Link href="/history" className={`nav-link ${location === '/history' ? 'active' : ''}`} data-testid="link-history">
             <History size={16} strokeWidth={1.8} /> Request history
@@ -102,12 +118,14 @@ function AppShell({
           <div className="crumb">
             <span>vault / gift</span>
             <ArrowRight size={13} />
-            <strong>{location === '/' ? 'Browse' : location === '/history' ? 'History' : 'Settings'}</strong>
+            <strong>{location === '/' ? 'Browse' : location === '/history' ? 'History' : location === '/settings' ? 'Settings' : 'Resale inspector'}</strong>
           </div>
           <div className="topbar-actions">
             <div className="balance-pill" data-testid="text-topbar-balance">
               <span className="star-token"><Coins size={10} strokeWidth={2.4} /></span>
-              {bot ? formatStars(bot.starBalance) : '—'} Stars
+              {location === '/resale'
+                ? bot?.balanceVerified ? `${formatStars(bot.starBalance)} Stars` : 'Unavailable'
+                : bot ? `${formatStars(bot.starBalance)} Stars` : '— Stars'}
             </div>
           </div>
         </header>
@@ -386,6 +404,512 @@ function BrowsePage() {
   );
 }
 
+function ResalePage() {
+  const [giftId, setGiftId] = useState('');
+  const [offset, setOffset] = useState<string | undefined>();
+  const [selectedSlug, setSelectedSlug] = useState('');
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
+  const [confirmationPhrase, setConfirmationPhrase] = useState('');
+  const [confirmationAttempted, setConfirmationAttempted] = useState(false);
+  const queryClient = useQueryClient();
+  const giftTypesQuery = useListResaleGiftTypes();
+  const params = useMemo(
+    () => ({ giftId: giftId || '1', ...(offset ? { offset } : {}) }),
+    [giftId, offset],
+  );
+  const resaleQuery = useListResaleCollectibles(params, {
+    query: {
+      enabled: Boolean(giftId),
+      queryKey: getListResaleCollectiblesQueryKey(params),
+    },
+  });
+  const previewMutation = usePreviewResalePaymentForm();
+  const purchaseMutation = useConfirmResalePurchase();
+  const transactionsQuery = useListResaleTransactions();
+  const botQuery = useGetBotStatus();
+  const items = resaleQuery.data?.supported ? resaleQuery.data.items.slice(0, 7) : [];
+  const selectedItem = items.find((item) => item.slug === selectedSlug);
+  const preview = previewMutation.data;
+  const returnedRecipientMatches = Boolean(
+    preview &&
+    preview.recipientUsername.replace(/^@/, '') === AUTHORIZED_RECIPIENT_USERNAME.replace(/^@/, '') &&
+    preview.recipientId === AUTHORIZED_RECIPIENT_ID,
+  );
+  const formReady = Boolean(
+    preview?.status === 'ready' &&
+    preview.supported &&
+    preview.paymentFormValid &&
+    preview.paymentForm,
+  );
+  const reportedTotal = preview?.totalStars ?? preview?.paymentForm?.totalStars ?? null;
+  const verifiedBalance = botQuery.data?.balanceVerified
+    ? botQuery.data.starBalance
+    : preview?.botBalanceVerified && preview.botBalanceStars !== null
+      ? preview.botBalanceStars
+      : null;
+  const payerBalance = preview?.payerBalanceStars ?? null;
+  const payerBalanceSufficient = Boolean(
+    preview?.payerBalanceVerified &&
+    payerBalance !== null &&
+    reportedTotal !== null &&
+    payerBalance >= reportedTotal,
+  );
+  const purchaseReady = Boolean(
+    formReady &&
+    returnedRecipientMatches &&
+    preview?.confirmationNonce &&
+    reportedTotal !== null &&
+    reportedTotal > 0 &&
+    preview.payerBalanceVerified &&
+    payerBalanceSufficient,
+  );
+  const giftTypes = giftTypesQuery.data?.supported ? giftTypesQuery.data.items : [];
+
+  const resetSelectionFlow = () => {
+    previewMutation.reset();
+    purchaseMutation.reset();
+    setConfirmationOpen(false);
+    setConfirmationPhrase('');
+    setConfirmationAttempted(false);
+  };
+
+  const requestPreflight = () => {
+    if (!selectedItem || previewMutation.isPending) return;
+    resetSelectionFlow();
+    previewMutation.mutate({
+      data: { giftId: selectedItem.giftId, slug: selectedItem.slug, ...(offset ? { offset } : {}) },
+    });
+  };
+
+  const selectListing = (slug: string) => {
+    if (purchaseMutation.isPending) return;
+    setSelectedSlug(slug);
+    resetSelectionFlow();
+  };
+
+  const loadNextPage = () => {
+    if (purchaseMutation.isPending) return;
+    const nextOffset = resaleQuery.data?.nextOffset;
+    if (!nextOffset) return;
+    setSelectedSlug('');
+    resetSelectionFlow();
+    setOffset(nextOffset);
+  };
+
+  const selectGiftType = (nextGiftId: string) => {
+    setGiftId(nextGiftId);
+    setOffset(undefined);
+    setSelectedSlug('');
+    resetSelectionFlow();
+  };
+
+  const openBuyConfirmation = () => {
+    if (!purchaseReady || confirmationAttempted) return;
+    setConfirmationPhrase('');
+    setConfirmationOpen(true);
+  };
+
+  const confirmPurchase = () => {
+    if (!selectedItem || !preview?.confirmationNonce || reportedTotal === null || !purchaseReady || confirmationPhrase !== 'BUY' || confirmationAttempted) return;
+    setConfirmationAttempted(true);
+    purchaseMutation.mutate({
+      data: {
+        giftId: selectedItem.giftId,
+        slug: selectedItem.slug,
+        confirmationNonce: preview.confirmationNonce,
+        expectedTotalStars: reportedTotal,
+        confirmationPhrase: 'BUY',
+      },
+    }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getListResaleTransactionsQueryKey() });
+      },
+    });
+  };
+
+  return (
+    <div className="page resale-page">
+      <div className="page-header resale-heading">
+        <div>
+          <div className="eyebrow">Telegram market / 04</div>
+          <h1 className="hero-title" style={{ fontSize: 'clamp(31px, 4vw, 43px)' }}>Resale inspector</h1>
+          <p className="hero-copy">Choose from Telegram’s live gift types, inspect real listings, then confirm one collectible only after its payment form and payer balance are verified.</p>
+        </div>
+        <div className="resale-live-mark"><span className="live-pip" /> Telegram-returned data only</div>
+      </div>
+
+      <section className="surface resale-search" data-testid="section-resale-search">
+        <div className="resale-search-copy">
+          <div className="surface-title">Live gift types</div>
+          <div className="surface-subtitle">Gift IDs and type names come directly from Telegram.</div>
+        </div>
+        <div className="resale-search-form">
+          <label className="field-label" htmlFor="resale-gift-type">Telegram gift type</label>
+          <select
+            id="resale-gift-type"
+            className="text-input"
+            value={giftId}
+            onChange={(event) => selectGiftType(event.target.value)}
+            disabled={giftTypesQuery.isLoading || !giftTypes.length || purchaseMutation.isPending}
+            data-testid="input-resale-gift-type"
+          >
+            <option value="">{giftTypesQuery.isLoading ? 'Loading Telegram gift types…' : 'Choose a live gift type'}</option>
+            {giftTypes.map((type) => (
+              <option key={type.giftId} value={type.giftId}>
+                {type.name} · {formatStars(type.stars)} Stars{type.soldOut ? ' · Sold out' : ''}
+              </option>
+            ))}
+          </select>
+          {giftTypesQuery.isError ? (
+            <div className="input-help resale-input-error">Telegram gift types could not be loaded. <button type="button" className="inline-retry" onClick={() => giftTypesQuery.refetch()} data-testid="button-retry-gift-types">Retry</button></div>
+          ) : giftTypesQuery.data && !giftTypesQuery.data.supported ? (
+            <div className="input-help resale-input-error">{giftTypesQuery.data.message || 'Live gift types are unavailable for this Telegram session.'}</div>
+          ) : (
+            <div className="input-help">Only the selected gift type’s real live listings are requested.</div>
+          )}
+        </div>
+      </section>
+
+      <div className="resale-grid">
+        <section className="surface resale-listings" data-testid="section-live-resale-listings">
+          <div className="surface-head">
+            <div>
+              <div className="surface-title">Live Telegram listings</div>
+              <div className="surface-subtitle">
+                {giftId
+                  ? `${giftTypes.find((type) => type.giftId === giftId)?.name ?? `Gift type ${giftId}`} · showing up to 7 returned listings`
+                  : 'Choose a gift type to request live listings'}
+              </div>
+            </div>
+            <div className="live-count"><span className="live-pip" /> LIVE</div>
+          </div>
+
+          {!giftId ? (
+            <div className="resale-empty">
+              <div className="resale-empty-icon"><Search size={20} /></div>
+              <h3>Choose a Telegram gift type</h3>
+              <p>Select a type above to request its current resale collectibles. No sample listings are shown here.</p>
+            </div>
+          ) : resaleQuery.isLoading ? (
+            <div className="resale-skeleton-list" aria-label="Loading live listings">
+              {[0, 1, 2].map((row) => (
+                <div className="resale-skeleton-row" key={row}>
+                  <div className="skeleton" style={{ width: 46, height: 46, borderRadius: 14 }} />
+                  <div style={{ flex: 1 }}>
+                    <div className="skeleton" style={{ width: '42%', height: 15 }} />
+                    <div className="skeleton" style={{ width: '68%', height: 10, marginTop: 9 }} />
+                  </div>
+                  <div className="skeleton" style={{ width: 68, height: 13 }} />
+                </div>
+              ))}
+            </div>
+          ) : resaleQuery.isError ? (
+            <div className="resale-query-error">
+              <QueryError onRetry={() => resaleQuery.refetch()} message="Telegram resale data could not be retrieved. Retry the live query." />
+            </div>
+          ) : resaleQuery.data && !resaleQuery.data.supported ? (
+            <div className="resale-empty resale-unavailable" role="status">
+              <div className="resale-empty-icon"><ShieldAlert size={20} /></div>
+              <h3>Live resale access unavailable</h3>
+              <p>{resaleQuery.data.message || 'Telegram did not provide live listings for this request.'}</p>
+              <div className="resale-honesty-note">No listings are invented when Telegram authorization or resale access is unavailable.</div>
+            </div>
+          ) : items.length ? (
+            <>
+              <div className="resale-list">
+                {items.map((item, index) => (
+                  <button
+                    type="button"
+                    className={`resale-item ${selectedSlug === item.slug ? 'selected' : ''}`}
+                    key={`${item.giftId}:${item.slug}`}
+                    onClick={() => selectListing(item.slug)}
+                    disabled={purchaseMutation.isPending}
+                    aria-pressed={selectedSlug === item.slug}
+                    data-testid={`card-resale-${item.slug}`}
+                  >
+                    <span className="resale-item-index">{String(index + 1).padStart(2, '0')}</span>
+                    <span className="resale-item-main">
+                      <span className="resale-item-name">{item.name}</span>
+                      <span className="resale-item-slug">{item.slug}</span>
+                      <span className="resale-attributes">
+                        {item.attributes.length
+                          ? item.attributes.map((attribute) => (
+                            <span className="attribute-chip" key={attribute.name}>
+                              {attribute.name}
+                            </span>
+                          ))
+                          : <span className="attribute-empty">No attributes returned</span>}
+                      </span>
+                    </span>
+                    <span className="resale-item-cost">
+                      <strong>{formatStars(item.priceStars)}</strong>
+                      <small>Stars</small>
+                      <span>Fee {item.transferFeeStars === null ? 'Unknown' : `${formatStars(item.transferFeeStars)} Stars`}</span>
+                    </span>
+                    <span className="resale-select-mark">{selectedSlug === item.slug ? <span /> : null}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="resale-list-footer">
+                <span>Listings and attributes are returned by Telegram for this query.</span>
+                {resaleQuery.data?.nextOffset ? (
+                  <button
+                    type="button"
+                    className="button-outline"
+                    onClick={loadNextPage}
+                    disabled={resaleQuery.isFetching || purchaseMutation.isPending}
+                    data-testid="button-load-more-resale"
+                  >
+                    {resaleQuery.isFetching ? 'Loading…' : 'Load next live page'}
+                  </button>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <div className="resale-empty">
+              <div className="resale-empty-icon"><Tag size={20} /></div>
+              <h3>No live listings returned</h3>
+              <p>{resaleQuery.data?.message || 'Telegram returned no resale collectibles for this gift type.'}</p>
+            </div>
+          )}
+        </section>
+
+        <aside className="surface resale-inspector" data-testid="panel-resale-preflight">
+          <div className="resale-inspector-head">
+            <div>
+              <div className="eyebrow">Telegram preflight</div>
+              <h2>Payment form</h2>
+            </div>
+            <span className="read-only-mark"><LockKeyhole size={14} /> Confirm separately</span>
+          </div>
+          <div className="resale-inspector-body">
+            {selectedItem ? (
+              <>
+                <div className="inspected-item">
+                  <div className="inspected-glyph">{selectedItem.name.slice(0, 1).toUpperCase()}</div>
+                  <div>
+                    <div className="inspected-name">{selectedItem.name}</div>
+                    <div className="inspected-slug">{selectedItem.slug}</div>
+                  </div>
+                </div>
+                <div className="preflight-facts">
+                  <div className="preflight-fact"><span>Listed price</span><strong>{formatStars(selectedItem.priceStars)} Stars</strong></div>
+                  <div className="preflight-fact"><span>Telegram-reported fee</span><strong>{selectedItem.transferFeeStars === null ? 'Unknown' : `${formatStars(selectedItem.transferFeeStars)} Stars`}</strong></div>
+                  <div className="preflight-fact"><span>Recipient</span><strong>{AUTHORIZED_RECIPIENT_USERNAME} <span className="recipient-id">/ {AUTHORIZED_RECIPIENT_ID}</span></strong></div>
+                  <div className="preflight-fact"><span>Verified bot balance</span><strong>{verifiedBalance === null ? 'Unavailable' : `${formatStars(verifiedBalance)} Stars`}</strong></div>
+                  <div className="preflight-fact"><span>Authorized MTProto payer</span><strong>{preview?.payerUsername ? `${preview.payerUsername.startsWith('@') ? '' : '@'}${preview.payerUsername}` : 'Unavailable'}{preview?.payerAccountId ? <span className="recipient-id"> / {preview.payerAccountId}</span> : null}</strong></div>
+                  <div className="preflight-fact"><span>MTProto payer balance</span><strong>{preview?.payerBalanceStars !== null && preview?.payerBalanceStars !== undefined ? `${formatStars(preview.payerBalanceStars)} Stars${preview.payerBalanceVerified ? ' · verified' : ' · unverified'}` : 'Unavailable'}</strong></div>
+                </div>
+                <button
+                  type="button"
+                  className="button-primary preflight-button"
+                  onClick={requestPreflight}
+                  disabled={!resaleQuery.data?.supported || previewMutation.isPending || purchaseMutation.isPending}
+                  data-testid="button-preview-payment-form"
+                >
+                  {previewMutation.isPending ? <><span className="button-pulse" /> Checking Telegram form…</> : 'Refresh Telegram preflight'}
+                </button>
+
+                {previewMutation.isPending ? (
+                  <div className="preflight-loading" aria-label="Checking payment form">
+                    <div className="skeleton" style={{ width: '62%', height: 13 }} />
+                    <div className="skeleton" style={{ width: '100%', height: 44, marginTop: 13 }} />
+                  </div>
+                ) : preview ? (
+                  <div className={`preflight-result ${formReady ? 'ready' : 'unavailable'}`} data-testid="status-resale-preflight">
+                    <div className="preflight-result-label">{formReady ? 'READY FOR AUTHORIZED PAYMENT' : 'NOT SUPPORTED / PAYMENT FORM UNAVAILABLE'}</div>
+                    <p>{preview.message}</p>
+                    <div className="preflight-returned">
+                      {preview.resalePriceStars !== null ? <div className="preflight-fact"><span>Telegram price</span><strong>{formatStars(preview.resalePriceStars)} Stars</strong></div> : null}
+                      <div className="preflight-fact"><span>Telegram fee</span><strong>{preview.transferFeeStars === null ? 'Unknown' : `${formatStars(preview.transferFeeStars)} Stars`}</strong></div>
+                      {reportedTotal !== null ? <div className="preflight-fact preflight-total"><span>Exact Telegram total</span><strong>{formatStars(reportedTotal)} Stars</strong></div> : null}
+                      {preview.paymentForm?.currency ? <div className="preflight-fact"><span>Form currency</span><strong>{preview.paymentForm.currency}</strong></div> : null}
+                    </div>
+                    {preview.paymentForm?.lines.length ? (
+                      <div className="form-lines">
+                        <div className="form-lines-title">Returned form lines</div>
+                        {preview.paymentForm.lines.map((line, index) => (
+                          <div className="preflight-fact" key={`${line.label}:${index}`}>
+                            <span>{line.label}</span><strong>{formatStars(line.amountStars)} Stars</strong>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {!returnedRecipientMatches ? (
+                      <div className="recipient-warning">
+                        Telegram returned a recipient that differs from {AUTHORIZED_RECIPIENT_USERNAME} / {AUTHORIZED_RECIPIENT_ID}. Buying is disabled.
+                      </div>
+                    ) : null}
+                    {formReady ? (
+                      <div className="payer-charge-note">
+                        The authorized MTProto payer above is the account charged by Telegram’s <code>sendStarsForm</code> operation. The bot balance is informational only.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : previewMutation.isError ? (
+                  <div className="preflight-result unavailable" role="alert" data-testid="status-resale-preflight">
+                    <div className="preflight-result-label">NOT SUPPORTED / PAYMENT FORM UNAVAILABLE</div>
+                    <p>{previewMutation.error instanceof Error ? previewMutation.error.message : 'Telegram did not return a valid payment form preview.'}</p>
+                  </div>
+                ) : (
+                  <div className="preflight-prompt">
+                    Select a live listing, then request Telegram’s payment-form preflight. Selection itself never purchases.
+                  </div>
+                )}
+                {preview && !previewMutation.isPending ? (
+                  <>
+                    <div className="buy-gate">
+                      <div className="buy-gate-title">Purchase authorization</div>
+                      <div className="buy-gate-copy">
+                        {purchaseReady
+                          ? 'Telegram returned a valid form and a verified payer balance that covers the exact total.'
+                          : !formReady
+                            ? 'A valid Telegram payment form is required before purchase can be enabled.'
+                            : !preview.payerBalanceVerified
+                              ? 'BUY is disabled until Telegram verifies the authorized payer balance.'
+                              : !payerBalanceSufficient
+                                ? 'The verified MTProto payer balance does not cover Telegram’s exact total.'
+                                : !returnedRecipientMatches
+                                  ? 'The Telegram-returned recipient does not match the configured recipient.'
+                                  : 'Telegram did not return the nonce or exact total required for a safe confirmation.'}
+                      </div>
+                      <button
+                        type="button"
+                        className="button-outline buy-open-button"
+                        onClick={openBuyConfirmation}
+                        disabled={!purchaseReady || confirmationAttempted || purchaseMutation.isPending}
+                        data-testid="button-open-buy-confirmation"
+                      >
+                        Continue to BUY confirmation
+                      </button>
+                    </div>
+                    {confirmationOpen ? (
+                      <div className="buy-confirmation" data-testid="section-buy-confirmation">
+                        <div className="buy-confirmation-kicker">One collectible · one payment</div>
+                        <h3>Confirm this Telegram charge</h3>
+                        <p>Type BUY to authorize {selectedItem.name} for exactly {reportedTotal === null ? 'an unavailable total' : `${formatStars(reportedTotal)} Stars`} from the verified MTProto payer. Recipient: {AUTHORIZED_RECIPIENT_USERNAME} / {AUTHORIZED_RECIPIENT_ID}.</p>
+                        <label className="field-label" htmlFor="confirm-buy-phrase">Type BUY to continue</label>
+                        <input
+                          id="confirm-buy-phrase"
+                          className="text-input buy-phrase-input"
+                          type="text"
+                          autoComplete="off"
+                          autoCapitalize="characters"
+                          value={confirmationPhrase}
+                          onChange={(event) => setConfirmationPhrase(event.target.value)}
+                          disabled={confirmationAttempted || purchaseMutation.isPending}
+                          data-testid="input-confirm-buy-phrase"
+                        />
+                        <button
+                          type="button"
+                          className="button-primary buy-final-button"
+                          onClick={confirmPurchase}
+                          disabled={!purchaseReady || confirmationPhrase !== 'BUY' || confirmationAttempted || purchaseMutation.isPending}
+                          data-testid="button-confirm-resale-buy"
+                        >
+                          {purchaseMutation.isPending ? 'Waiting for Telegram result…' : 'BUY this collectible once'}
+                        </button>
+                        <button
+                          type="button"
+                          className="button-outline buy-cancel-button"
+                          onClick={() => {
+                            setConfirmationOpen(false);
+                            setConfirmationPhrase('');
+                          }}
+                          disabled={purchaseMutation.isPending}
+                          data-testid="button-cancel-buy-confirmation"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+                {purchaseMutation.isPending ? (
+                  <div className="purchase-pending" role="status">Waiting for Telegram’s confirmed payment and delivery result.</div>
+                ) : purchaseMutation.data ? (
+                  <div className="purchase-result" data-testid="status-resale-purchase">
+                    <div className="purchase-result-title">Telegram purchase response · {purchaseMutation.data.status}</div>
+                    <p>{purchaseMutation.data.message}</p>
+                    <div className="preflight-facts">
+                      <div className="preflight-fact"><span>Payment confirmed</span><strong>{purchaseMutation.data.paymentConfirmed ? 'Yes' : 'No'}</strong></div>
+                      <div className="preflight-fact"><span>Delivery confirmed</span><strong>{purchaseMutation.data.deliveryConfirmed ? 'Yes' : 'No'}</strong></div>
+                      {purchaseMutation.data.totalStars !== null ? <div className="preflight-fact"><span>Telegram-reported total</span><strong>{formatStars(purchaseMutation.data.totalStars)} Stars</strong></div> : null}
+                      {purchaseMutation.data.transactionId ? <div className="preflight-fact"><span>Transaction ID</span><strong>{purchaseMutation.data.transactionId}</strong></div> : null}
+                    </div>
+                  </div>
+                ) : purchaseMutation.isError ? (
+                  <div className="purchase-uncertain" role="alert">
+                    The purchase request did not return a confirmed result. Review the persisted Telegram transaction ledger before any further action.
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="resale-empty inspector-empty">
+                <div className="resale-empty-icon"><ShieldCheck size={20} /></div>
+                <h3>Nothing selected</h3>
+                <p>The inspector stays empty until you choose a listing from Telegram’s live results.</p>
+              </div>
+            )}
+            <div className="resale-safety-note">
+              <LockKeyhole size={14} />
+              <span>Listing selection and preflight do not buy. Only the final BUY action submits one confirmed collectible purchase to Telegram.</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <section className="surface resale-transaction-section" data-testid="section-resale-transactions">
+        <div className="surface-head">
+          <div>
+            <div className="surface-title">Persisted Telegram transactions</div>
+            <div className="surface-subtitle">Payment, delivery, and status are shown only from the transaction API.</div>
+          </div>
+          <button type="button" className="button-outline" onClick={() => transactionsQuery.refetch()} disabled={transactionsQuery.isFetching} data-testid="button-refresh-resale-transactions">
+            {transactionsQuery.isFetching ? 'Refreshing…' : 'Refresh ledger'}
+          </button>
+        </div>
+        {transactionsQuery.isLoading ? (
+          <div className="resale-transaction-loading"><div className="skeleton" style={{ height: 62 }} /><div className="skeleton" style={{ height: 62, marginTop: 8 }} /></div>
+        ) : transactionsQuery.isError ? (
+          <div className="resale-query-error"><QueryError onRetry={() => transactionsQuery.refetch()} message="Persisted Telegram transactions could not be loaded." /></div>
+        ) : transactionsQuery.data?.length ? (
+          <div className="resale-transactions">
+            {transactionsQuery.data.map((transaction) => (
+              <article className="resale-transaction" key={transaction.id} data-testid={`row-resale-transaction-${transaction.id}`}>
+                <div className="transaction-item">
+                  <strong>{transaction.name}</strong>
+                  <span>{transaction.slug} · gift {transaction.giftId}</span>
+                  <small>{formatDate(transaction.createdAt)}</small>
+                </div>
+                <div className="transaction-meta">
+                  <span className={`transaction-status ${transaction.status}`}>{transaction.status.replace('_', ' ')}</span>
+                  <span>Payment {transaction.paymentConfirmed ? 'confirmed' : 'not confirmed'}</span>
+                  <span>Delivery {transaction.deliveryConfirmed ? 'confirmed' : 'not confirmed'}</span>
+                </div>
+                <div className="transaction-cost">
+                  <strong>{transaction.totalStars === null ? 'Total unavailable' : `${formatStars(transaction.totalStars)} Stars`}</strong>
+                  <span>{transaction.recipientUsername || 'Recipient unavailable'} / {transaction.recipientId || 'ID unavailable'}</span>
+                </div>
+                <div className="transaction-message">
+                  <span>{transaction.message}</span>
+                  {transaction.telegramResult ? <small>Telegram result: {transaction.telegramResult}</small> : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="resale-empty resale-transaction-empty">
+            <div className="resale-empty-icon"><History size={20} /></div>
+            <h3>No persisted resale transactions</h3>
+            <p>Only results returned and saved by Telegram’s transaction API appear here.</p>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function HistoryPage() {
   const purchasesQuery = useListPurchases();
 
@@ -427,7 +951,7 @@ function HistoryPage() {
           <div className="empty-state">
             <div className="empty-icon"><History size={21} /></div>
             <h3>Your ledger is empty</h3>
-            <p>This read-only dashboard does not create purchase requests or spend Stars. Use Browse to preview item prices and transfer fees.</p>
+            <p>This ledger shows Browse purchase requests only. Confirmed Telegram resale payments and delivery outcomes are listed in the Resale inspector.</p>
             <Link href="/" className="button-primary" style={{ width: 'auto', padding: '0 17px', textDecoration: 'none', marginTop: 20 }} data-testid="link-browse-empty">
               Find a collectible <ArrowRight size={15} />
             </Link>
@@ -457,11 +981,11 @@ function SettingsPage() {
       <div className="settings-layout">
         <section className="surface settings-card" data-testid="section-read-only-settings">
           <div className="eyebrow">Execution policy</div>
-          <h2 style={{ marginTop: 9 }}>Planning mode only</h2>
-          <p>This dashboard never sends gifts, creates purchase requests, invokes MTProto, or spends Stars.</p>
+            <h2 style={{ marginTop: 9 }}>Execution guardrails</h2>
+            <p>Browse, request history, and transfer previews remain non-executing. The resale path can submit one collectible purchase only after Telegram validates a payment form, verifies the authorized payer balance, and the user types BUY.</p>
           <div className="capability-list">
-            <div className="capability"><BadgeCheck size={17} /><div><strong>Balance visible</strong><span>Current bot Stars are read from Telegram and never modified here.</span></div></div>
-            <div className="capability"><LockKeyhole size={17} /><div><strong>Execution blocked</strong><span>Each preview shows whether Telegram's API can execute the transaction.</span></div></div>
+              <div className="capability"><BadgeCheck size={17} /><div><strong>Balances stay distinct</strong><span>Bot balance is informational. A resale charge uses the verified balance of the authorized Telegram MTProto payer.</span></div></div>
+              <div className="capability"><LockKeyhole size={17} /><div><strong>Explicit purchase gate</strong><span>No listing selection or preflight submits payment; one final BUY confirmation is required for a single collectible.</span></div></div>
           </div>
         </section>
         <section className="connection-banner" data-testid="section-bot-capability">
@@ -490,6 +1014,7 @@ function Router() {
             <BrowsePage />
           </Route>
           <Route path="/history"><HistoryPage /></Route>
+          <Route path="/resale"><ResalePage /></Route>
           <Route path="/settings">
             <SettingsPage />
           </Route>

@@ -14,4 +14,5 @@ export interface ResalePreflightInput {
      * @maxLength 256
      */
   slug: string;
+  offset?: string;
 }

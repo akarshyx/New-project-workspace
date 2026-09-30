@@ -174,14 +174,33 @@ export const ListResaleCollectiblesResponse = zod.object({
   "slug": zod.string(),
   "name": zod.string(),
   "attributes": zod.array(zod.object({
-  "name": zod.string(),
-  "value": zod.string()
+  "name": zod.string()
 })),
   "priceStars": zod.number().int().min(listResaleCollectiblesResponseItemsItemPriceStarsMin),
   "transferFeeStars": zod.number().int().min(listResaleCollectiblesResponseItemsItemTransferFeeStarsMin).nullable()
 })),
   "nextOffset": zod.string().nullable(),
   "message": zod.string()
+})
+
+
+/**
+ * @summary List collectible gift types returned by Telegram
+ */
+export const listResaleGiftTypesResponseItemsItemStarsMin = 0;
+
+
+
+export const ListResaleGiftTypesResponse = zod.object({
+  "supported": zod.boolean(),
+  "items": zod.array(zod.object({
+  "giftId": zod.string(),
+  "name": zod.string(),
+  "stars": zod.number().int().min(listResaleGiftTypesResponseItemsItemStarsMin),
+  "soldOut": zod.boolean()
+})),
+  "message": zod.string(),
+  "value": zod.string().optional()
 })
 
 
@@ -195,7 +214,8 @@ export const previewResalePaymentFormBodySlugMax = 256;
 
 export const PreviewResalePaymentFormBody = zod.object({
   "giftId": zod.string().regex(previewResalePaymentFormBodyGiftIdRegExp),
-  "slug": zod.string().min(1).max(previewResalePaymentFormBodySlugMax)
+  "slug": zod.string().min(1).max(previewResalePaymentFormBodySlugMax),
+  "offset": zod.string().optional()
 })
 
 export const previewResalePaymentFormResponseCollectibleOnePriceStarsMin = 0;
@@ -218,8 +238,7 @@ export const PreviewResalePaymentFormResponse = zod.object({
   "slug": zod.string(),
   "name": zod.string(),
   "attributes": zod.array(zod.object({
-  "name": zod.string(),
-  "value": zod.string()
+  "name": zod.string()
 })),
   "priceStars": zod.number().int().min(previewResalePaymentFormResponseCollectibleOnePriceStarsMin),
   "transferFeeStars": zod.number().int().min(previewResalePaymentFormResponseCollectibleOneTransferFeeStarsMin).nullable()
@@ -234,7 +253,82 @@ export const PreviewResalePaymentFormResponse = zod.object({
   "label": zod.string(),
   "amountStars": zod.number().int()
 }))
-}),zod.null()])
+}),zod.null()]),
+  "confirmationNonce": zod.string().nullable(),
+  "payerAccountId": zod.string().nullable(),
+  "payerUsername": zod.string().nullable(),
+  "payerBalanceStars": zod.number().int().nullable(),
+  "payerBalanceVerified": zod.boolean()
 })
+
+
+/**
+ * A single-use preflight nonce and exact expected Stars total are required. This operation can spend Stars and deliver one collectible to the configured recipient.
+ * @summary Submit one explicitly confirmed resale payment to Telegram
+ */
+export const confirmResalePurchaseBodyGiftIdRegExp = new RegExp('^[1-9][0-9]*$');
+export const confirmResalePurchaseBodySlugMax = 256;
+
+export const confirmResalePurchaseBodyConfirmationNonceMin = 32;
+export const confirmResalePurchaseBodyConfirmationNonceMax = 64;
+
+
+
+
+export const ConfirmResalePurchaseBody = zod.object({
+  "giftId": zod.string().regex(confirmResalePurchaseBodyGiftIdRegExp),
+  "slug": zod.string().min(1).max(confirmResalePurchaseBodySlugMax),
+  "confirmationNonce": zod.string().min(confirmResalePurchaseBodyConfirmationNonceMin).max(confirmResalePurchaseBodyConfirmationNonceMax),
+  "expectedTotalStars": zod.number().int().min(1),
+  "confirmationPhrase": zod.enum(['BUY'])
+})
+
+export const confirmResalePurchaseResponseCollectibleOnePriceStarsMin = 0;
+
+export const confirmResalePurchaseResponseCollectibleOneTransferFeeStarsMin = 0;
+
+
+
+export const ConfirmResalePurchaseResponse = zod.object({
+  "status": zod.enum(['sent', 'blocked', 'failed', 'unknown']),
+  "paymentConfirmed": zod.boolean(),
+  "deliveryConfirmed": zod.boolean(),
+  "message": zod.string(),
+  "recipientId": zod.string(),
+  "recipientUsername": zod.string(),
+  "collectible": zod.union([zod.object({
+  "giftId": zod.string(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "attributes": zod.array(zod.object({
+  "name": zod.string()
+})),
+  "priceStars": zod.number().int().min(confirmResalePurchaseResponseCollectibleOnePriceStarsMin),
+  "transferFeeStars": zod.number().int().min(confirmResalePurchaseResponseCollectibleOneTransferFeeStarsMin).nullable()
+}),zod.null()]),
+  "totalStars": zod.number().int().nullable(),
+  "transactionId": zod.string().optional()
+})
+
+
+/**
+ * @summary List persisted Telegram resale payment results
+ */
+export const ListResaleTransactionsResponseItem = zod.object({
+  "id": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "giftId": zod.string(),
+  "slug": zod.string(),
+  "name": zod.string(),
+  "recipientId": zod.string(),
+  "recipientUsername": zod.string(),
+  "totalStars": zod.number().int().nullable(),
+  "status": zod.enum(['form_ready', 'processing', 'sent', 'failed', 'unknown']),
+  "paymentConfirmed": zod.boolean(),
+  "deliveryConfirmed": zod.boolean(),
+  "message": zod.string(),
+  "telegramResult": zod.string().nullable()
+})
+export const ListResaleTransactionsResponse = zod.array(ListResaleTransactionsResponseItem)
 
 
