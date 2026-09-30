@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Telegram Collectibles"
+description = "A Telegram collectible management console that preserves the existing catalog, bot balance, request history, and settings, with a separate read-only resale payment-form preflight that never submits payment."
+version = "1.0.0"
+id = "artifacts/telegram-collectibles"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21317
+
+[services.development]
+run = "pnpm --filter @workspace/telegram-collectibles run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/telegram-collectibles", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/telegram-collectibles/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21317"
+BASE_PATH = "/"
